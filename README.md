@@ -1,3 +1,3 @@
 ## TEST 
-Extract tf module dependancies
+Extract tf module dependencies
 
