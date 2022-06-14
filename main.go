@@ -1,12 +1,12 @@
 package main
 
 import (
-	"context"
+	"bufio"
 	"fmt"
 	"log"
+	"net/http"
 	"strings"
 
-	"github.com/google/go-github/github"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -28,9 +28,9 @@ type ModuleMapping struct {
 // LoadTerraformFiles loads terraform files from a given dir.
 func main() {
 
-	////////////////
-	// first part //
-	////////////////
+	///////////////////////////////
+	// first part: parse tf file //
+	//////////////////////////////
 
 	p := hclparse.NewParser()
 	f, diags := p.ParseHCLFile("main.tf")
@@ -51,9 +51,10 @@ func main() {
 		fmt.Println("Module", m.Name, m.Source)
 	}
 
-	///////////////
-	//Second Part//
-	///////////////
+	/////////////////////////////////////
+	//Second Part: fetch file in github//
+	/////////////////////////////////////
+	// todo: parse branch,manage error
 
 	// Parse module source Address
 	location := fm.ModuleMappings[0].Source
@@ -63,12 +64,31 @@ func main() {
 	// Assume that the module dir contains a main.tf and a variables.tf
 	pathv := strings.Split(parts[6], "?")[0] + "/" + "variables.tf"
 	//pathm := strings.Split(parts[6], "?")[0] + "/" + "main.tf"
+	fmt.Printf("Owner: %s\nRepo: %s\nPathv: %s\n", owner, repo, pathv)
 
-	// Get the file from the repo main branch
-	client := github.NewClient(nil)
-	file, _, _, _ := client.Repositories.GetContents(context.Background(), owner, repo, pathv, nil)
-	//fc, _ := *file.GetContent()
-	//fe := file.Encoding
-	//c, _ := base64.StdEncoding.DecodeString(*file.Content)
-	fmt.Println(c)
+	// Fetchthe file from the repo master branch
+	data, err := fectcher(owner, repo, pathv)
+	if err != nil {
+		log.Fatal("Cannot request repo: %s", err)
+	}
+	fmt.Println(string(data))
+}
+
+func fectcher(owner, repo, path string) ([]byte, error) {
+	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/%s",
+		owner, repo, path)
+
+	r, err := http.Get(url)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	var data []byte
+	s := bufio.NewScanner(r.Body)
+	for s.Scan() {
+		data = append(data, s.Bytes()...)
+		data = append(data, '\n')
+	}
+
+	return data, nil
 }

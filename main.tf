@@ -4,7 +4,8 @@ resource "not_to_be_treated" "my_data" {
 }
 
 module "module1" {
-  source = "git::ssh://git@github.com/futurice/terraform-utils.git//aws_ec2_ebs_docker_host?ref=v11.0"
+  source = "git::ssh://git@github.com/jareware/terraform-utils.git//aws_ec2_ebs_docker_host?ref=v11.0"
+
   hostname             = "my-host"
   ssh_private_key_path = "~/.ssh/id_rsa" 
   ssh_public_key_path  = "~/.ssh/id_rsa.pub"
