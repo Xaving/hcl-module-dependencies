@@ -13,7 +13,7 @@ import (
 )
 
 // FileMapping is a schema for Terraform file.
-type FileMapping struct {
+type Modules struct {
 	ModuleMappings []ModuleMapping `hcl:"module,block"`
 	Remain         hcl.Body        `hcl:",remain"`
 }
@@ -22,6 +22,18 @@ type FileMapping struct {
 type ModuleMapping struct {
 	Name   string   `hcl:"name,label"`
 	Source string   `hcl:"source"`
+	Remain hcl.Body `hcl:",remain"`
+}
+
+//Structure for variable buffer file
+type Variables struct {
+	VariableMappings []VariableMapping `hcl:"variable,block"`
+	Remain           hcl.Body          `hcl:",remain"`
+}
+
+// VariableMapping is a schema for "variable" block
+type VariableMapping struct {
+	Name   string   `hcl:"name,label"`
 	Remain hcl.Body `hcl:",remain"`
 }
 
@@ -39,16 +51,11 @@ func main() {
 		return
 	}
 
-	fm := &FileMapping{}
-	diags = gohcl.DecodeBody(f.Body, nil, fm)
+	ms := &Modules{}
+	diags = gohcl.DecodeBody(f.Body, nil, ms)
 	if diags.HasErrors() {
 		fmt.Println("Error")
 		return
-	}
-
-	// Print module name and source
-	for _, m := range fm.ModuleMappings {
-		fmt.Println("Module", m.Name, m.Source)
 	}
 
 	/////////////////////////////////////
@@ -57,24 +64,68 @@ func main() {
 	// todo: parse branch,manage error
 
 	// Parse module source Address
-	location := fm.ModuleMappings[0].Source
+	location := ms.ModuleMappings[0].Source
 	parts := strings.Split(location, "/")
 	owner := parts[3]
 	repo := strings.Split(parts[4], ".")[0]
 	// Assume that the module dir contains a main.tf and a variables.tf
 	pathv := strings.Split(parts[6], "?")[0] + "/" + "variables.tf"
 	//pathm := strings.Split(parts[6], "?")[0] + "/" + "main.tf"
-	fmt.Printf("Owner: %s\nRepo: %s\nPathv: %s\n", owner, repo, pathv)
+	//fmt.Printf("Owner: %s\nRepo: %s\nPathv: %s\n", owner, repo, pathv)
 
-	// Fetchthe file from the repo master branch
-	data, err := fectcher(owner, repo, pathv)
+	// Fetch the file from the repo master branch
+	data, err := fetcher(owner, repo, pathv)
 	if err != nil {
 		log.Fatal("Cannot request repo: %s", err)
 	}
-	fmt.Println(string(data))
+
+	/////////////////////////////////
+	//Third Part: parse the buffer //
+	////////////////////////////////
+	variables, diags := parseVariable(data)
+	if diags.HasErrors() {
+		log.Fatalf("Error while parsing the buffer for variables")
+	}
+
+	/////////////////////////////////
+	// Fourth Part: Format a result//
+	/////////////////////////////////
+
+	m := ms.ModuleMappings[0]
+	fmt.Printf("Module\n")
+	fmt.Printf("\tName: %s\n", m.Name)
+	fmt.Printf("\tSource: %s\n", m.Source)
+	fmt.Printf("\tVariable: \n")
+	for _, v := range variables {
+		fmt.Printf("\t\tVariable: %s\n", v)
+	}
 }
 
-func fectcher(owner, repo, path string) ([]byte, error) {
+func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
+	// Create the parser from the buffer
+	p := hclparse.NewParser()
+	pi, diags := p.ParseHCL(input, "from_variable_file")
+	if diags.HasErrors() {
+		return nil, diags
+	}
+
+	// Get the variables from the parser
+	vs := &Variables{}
+	diags = gohcl.DecodeBody(pi.Body, nil, vs)
+	if diags.HasErrors() {
+		fmt.Println("Error")
+		return nil, diags
+	}
+
+	// Return the list of variable name
+	var variables []string
+	for _, v := range vs.VariableMappings {
+		variables = append(variables, v.Name)
+	}
+	return variables, diags
+}
+
+func fetcher(owner, repo, path string) ([]byte, error) {
 	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/master/%s",
 		owner, repo, path)
 
