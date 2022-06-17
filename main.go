@@ -49,7 +49,7 @@ func main() {
 	//////////////////////////////
 
 	p := hclparse.NewParser()
-	f, diags := p.ParseHCLFile("test4.tf")
+	f, diags := p.ParseHCLFile("test1.tf")
 	if diags.HasErrors() {
 		log.Fatalf("diags: %v", diags)
 	}
@@ -68,6 +68,8 @@ func main() {
 	// check if it's a repo with main or master
 
 	for _, mod := range ms.ModuleMappings {
+
+		fmt.Println("###########", parseModuleAddress(mod.Source), "\n")
 		// Parse module source Address
 		location := mod.Source
 		fmt.Println(location)
@@ -117,6 +119,58 @@ func main() {
 			fmt.Printf("\t\tVariable: %s\n", v)
 		}
 	}
+}
+
+func parseModuleAddress(source string) []string {
+	// manage source of different form: ssh:
+	//git@github.com/, ../module, ./module, github.com/,git::ssh://git@github.com/
+
+	// trim prefix
+	t := source
+	for _, p := range []string{"git@github.com/", "github.com/", "git::ssh://git@github.com/"} {
+		t = strings.TrimPrefix(t, p)
+	}
+
+	// split string with ?ref=
+	s := strings.Split(t, "?ref=")
+
+	// extract path if any
+	var path string
+	n := s[0]
+	if strings.Contains(n, "//") {
+		c := strings.Split(n, "//")
+		path = c[1]
+		n = c[0]
+	}
+
+	// extract owner, repo
+	var owner string
+	var repo string
+	p := strings.Split(n, "/")
+	owner = p[0]
+	repo = strings.TrimSuffix(p[1], ".git")
+
+	// check if a specific branch
+	var branch string
+
+	if len(s) != 1 {
+		// A branch was provided
+		branch = s[1]
+	} else {
+		// check if repo is main or master
+		// by fetching a file variables.tf
+		branch = "main"
+		address := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s/variable.tf",
+			owner, repo, branch, path)
+
+		_, err := http.Get(address)
+		if err != nil {
+			// change main to master
+			branch = "master"
+		}
+	}
+
+	return []string{owner, repo, branch, path}
 }
 
 func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
