@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/gohcl"
 	"github.com/hashicorp/hcl/v2/hclparse"
@@ -69,32 +67,13 @@ func main() {
 
 	for _, mod := range ms.ModuleMappings {
 
-		fmt.Println("###########", parseModuleAddress(mod.Source), "\n")
 		// Parse module source Address
-		location := mod.Source
-		fmt.Println(location)
-		parts := strings.Split(location, "/")
-		owner := parts[3]
-		repo := strings.Split(parts[4], ".")[0]
+		url := parseModuleAddress(mod.Source)
 
-		// parse the path
-		var pathv string
-		if strings.Count(location, "//") == 2 {
-			// Assume that the module dir contains a main.tf and a variables.tf
-			pathv = strings.Split(parts[6], "?")[0] + "/" + "variables.tf"
-			//pathm := strings.Split(parts[6], "?")[0] + "/" + "main.tf"
-		} else {
-			pathv = "variables.tf"
-		}
-		fmt.Printf("Owner: %s\nRepo: %s\nPathv: %s\n", owner, repo, pathv)
-
-		// Check the HEAD branch name
-		hn := checkHeadName(owner, repo)
-
-		// Fetch the file from the repo master branch
-		data, err := fetcher(owner, repo, pathv, hn)
+		// Fetch a file
+		data, err := fetchFile(url, "variables.tf")
 		if err != nil {
-			log.Fatal("Cannot request repo: %s", err)
+			log.Fatal("Cannot request file: %s", err)
 		}
 
 		/////////////////////////////////
@@ -121,7 +100,7 @@ func main() {
 	}
 }
 
-func parseModuleAddress(source string) []string {
+func parseModuleAddress(source string) string {
 	// manage source of different form: ssh:
 	//git@github.com/, ../module, ./module, github.com/,git::ssh://git@github.com/
 
@@ -168,9 +147,9 @@ func parseModuleAddress(source string) []string {
 			// change main to master
 			branch = "master"
 		}
-	}
 
-	return []string{owner, repo, branch, path}
+	}
+	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s/", owner, repo, branch, path)
 }
 
 func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
@@ -197,9 +176,8 @@ func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
 	return variables, diags
 }
 
-func fetcher(owner, repo, path, headname string) ([]byte, error) {
-	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s",
-		owner, repo, headname, path)
+func fetchFile(address, filename string) ([]byte, error) {
+	url := address + filename
 
 	r, err := http.Get(url)
 	if err != nil {
@@ -214,20 +192,4 @@ func fetcher(owner, repo, path, headname string) ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-func checkHeadName(owner, repo string) string {
-	// Check if branch is master or main or something else
-	url := fmt.Sprintf("https://github.com/%s/%s", owner, repo)
-	r, _ := git.Clone(memory.NewStorage(), nil, &git.CloneOptions{
-		URL: url,
-	})
-
-	// ... retrieves the branch pointed by HEAD
-	ref, _ := r.Head()
-	rs := strings.Split(ref.String(), "/")
-	result := rs[len(rs)-1]
-
-	// don't catch error return
-	return result
 }
