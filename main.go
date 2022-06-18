@@ -45,9 +45,13 @@ func main() {
 	///////////////////////////////
 	// first part: parse tf file //
 	//////////////////////////////
-
 	p := hclparse.NewParser()
-	f, diags := p.ParseHCLFile("test1.tf")
+	// for test purpose file and default value are fixed
+	default_owner := "aamkye"
+	default_repo := "bday"
+	default_branch := "master"
+	default_path := "terraform"
+	f, diags := p.ParseHCLFile("test6.tf")
 	if diags.HasErrors() {
 		log.Fatalf("diags: %v", diags)
 	}
@@ -61,17 +65,34 @@ func main() {
 	/////////////////////////////////////
 	//Second Part: fetch file in github//
 	/////////////////////////////////////
-	// todo: parse branch,manage error,
-	// manage source name like source = "github.com/slswt/modules//aws/services/api_gateway"
-	// check if it's a repo with main or master
 
 	for _, mod := range ms.ModuleMappings {
 
 		// Parse module source Address
-		url := parseModuleAddress(mod.Source)
+		fmt.Printf("#############: %s\n", mod.Source)
+		var url string
+		// Source contains prefix ./ or ../
+		fmt.Println("######", mod.Source, "\n")
+		if string(mod.Source[0]) == "." {
+			// todo make the path from .. and .
+			// for test purpose take the suffix
+			extra_path := strings.TrimPrefix(mod.Source, "./")
+			// Use default default values
+			url = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s/%s/",
+				default_owner, default_repo, default_branch, default_path, extra_path)
+		} else {
+			// Parse adress
+			url = parseModuleAddress(mod.Source)
+		}
+		fmt.Println("######", url, "\n")
+		// Fetch the variable.tf
+		vars, err := fetchFile(url, "variables.tf")
+		if err != nil {
+			log.Fatal("Cannot request file: %s", err)
+		}
 
-		// Fetch a file
-		data, err := fetchFile(url, "variables.tf")
+		// Fetch the main.tf
+		main, err := fetchFile(url, "main.tf")
 		if err != nil {
 			log.Fatal("Cannot request file: %s", err)
 		}
@@ -79,9 +100,16 @@ func main() {
 		/////////////////////////////////
 		//Third Part: parse the buffer //
 		////////////////////////////////
-		variables, diags := parseVariable(data)
-		if diags.HasErrors() {
+		variables, diagsv := parseVariable(vars)
+		if diagsv.HasErrors() {
 			log.Fatalf("Error while parsing the buffer for variables")
+		}
+
+		modules, diagsm := parseModule(main)
+		no_main_file := false
+		if diagsm.HasErrors() {
+			no_main_file = true
+			//log.Fatalf("Error while parsing the buffer for modules")
 		}
 
 		/////////////////////////////////
@@ -97,22 +125,26 @@ func main() {
 		for _, v := range variables {
 			fmt.Printf("\t\tVariable: %s\n", v)
 		}
+		if !no_main_file {
+			fmt.Println("SUB-module", modules, "\n")
+		} else {
+			fmt.Println("No main.tf found\n")
+		}
 	}
 }
 
 func parseModuleAddress(source string) string {
+	//##############
 	// manage source of different form: ssh:
 	//git@github.com/, ../module, ./module, github.com/,git::ssh://git@github.com/
-
+	//##############
 	// trim prefix
 	t := source
 	for _, p := range []string{"git@github.com/", "github.com/", "git::ssh://git@github.com/"} {
 		t = strings.TrimPrefix(t, p)
 	}
-
 	// split string with ?ref=
 	s := strings.Split(t, "?ref=")
-
 	// extract path if any
 	var path string
 	n := s[0]
@@ -121,33 +153,28 @@ func parseModuleAddress(source string) string {
 		path = c[1]
 		n = c[0]
 	}
-
 	// extract owner, repo
 	var owner string
 	var repo string
 	p := strings.Split(n, "/")
 	owner = p[0]
 	repo = strings.TrimSuffix(p[1], ".git")
-
 	// check if a specific branch
 	var branch string
-
+	// If there is a branch
 	if len(s) != 1 {
-		// A branch was provided
 		branch = s[1]
 	} else {
 		// check if repo is main or master
-		// by fetching a file variables.tf
 		branch = "main"
 		address := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s/variable.tf",
 			owner, repo, branch, path)
-
+		// Check the address
 		_, err := http.Get(address)
 		if err != nil {
 			// change main to master
 			branch = "master"
 		}
-
 	}
 	return fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s/", owner, repo, branch, path)
 }
@@ -159,7 +186,6 @@ func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
 	if diags.HasErrors() {
 		return nil, diags
 	}
-
 	// Get the variables from the parser
 	vs := &Variables{}
 	diags = gohcl.DecodeBody(pi.Body, nil, vs)
@@ -167,7 +193,6 @@ func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
 		fmt.Println("Error")
 		return nil, diags
 	}
-
 	// Return the list of variable name
 	var variables []string
 	for _, v := range vs.VariableMappings {
@@ -176,20 +201,46 @@ func parseVariable(input []byte) ([]string, hcl.Diagnostics) {
 	return variables, diags
 }
 
-func fetchFile(address, filename string) ([]byte, error) {
-	url := address + filename
+func parseModule(input []byte) ([]string, hcl.Diagnostics) {
+	// Create the parser from the buffer
+	fmt.Printf("#############: %s\n", "pass1")
+	p := hclparse.NewParser()
+	pi, diags := p.ParseHCL(input, "from_variable_file")
+	if diags.HasErrors() {
+		fmt.Println(diags)
+		return nil, diags
+	}
+	// Get the Modules from the parser
+	fmt.Printf("#############: %s\n", "pass2")
+	ms := &Modules{}
+	diags = gohcl.DecodeBody(pi.Body, nil, ms)
+	if diags.HasErrors() {
+		fmt.Println("Error")
+		return nil, diags
+	}
+	// Return the list of module name
+	fmt.Printf("#############: %s\n", "pass3")
+	var mods []string
+	for _, m := range ms.ModuleMappings {
+		mods = append(mods, m.Name)
+	}
+	return mods, diags
+}
 
+func fetchFile(address, filename string) ([]byte, error) {
+	// Compose the url
+	url := address + filename
+	// Get the file
 	r, err := http.Get(url)
 	if err != nil {
 		return []byte{}, err
 	}
-
+	// return the result in a buffer
 	var data []byte
 	s := bufio.NewScanner(r.Body)
 	for s.Scan() {
 		data = append(data, s.Bytes()...)
 		data = append(data, '\n')
 	}
-
 	return data, nil
 }
